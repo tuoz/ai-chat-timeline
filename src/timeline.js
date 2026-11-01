@@ -100,6 +100,9 @@
         for (const selector of platform.turnSelectors) {
             let found;
             try { found = document.querySelectorAll(selector); } catch { continue; }
+            // 跳过被隐藏的元素：平台切换对话时可能把旧对话整页留在 DOM 里、只用 display:none 藏起来
+            // （ChatGPT 2026-11），不过滤的话圆点会把访问过的对话全部累积进来
+            found = Array.from(found).filter(isShown);
             if (found.length === 0) continue;
 
             // 去掉嵌套在另一个匹配元素里的元素（文档序中祖先总在前面）
@@ -111,6 +114,11 @@
             return { selector, turns: result };
         }
         return { selector: null, turns: [] };
+    }
+
+    // 自身或祖先 display:none 时为 false；滚出视口、虚拟列表空壳仍算显示
+    function isShown(el) {
+        return el.checkVisibility ? el.checkVisibility() : el.getClientRects().length > 0;
     }
 
     function turnText(item) {

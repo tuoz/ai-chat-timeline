@@ -6,6 +6,7 @@
         claude（2026-11 虚拟列表：只渲染视口附近的行，其余行移出 DOM、用上下空块占高度）
         claude-legacy（旧结构 data-test-render-count）
         chatgpt（2026-11 结构，data-turn-key 一轮一对问答）
+        chatgpt-keepalive（同上，且切换对话时旧对话留在 DOM 里、外层 display:none）
         chatgpt-virtual（2026-07 虚拟化空壳结构） | chatgpt-legacy（旧结构）
   模拟页会把对应平台的配置复制一份、域名改成 localhost，然后加载真实的插件脚本。
   平台改版、src/platforms.js 新增结构后，在这里加一个对应的模式，旧模式保留用于回归。
@@ -51,7 +52,7 @@
 'use strict';
 const mode = new URLSearchParams(location.search).get('mode') || 'gemini';
 document.getElementById('mode-label').textContent = `mode = ${mode}`;
-const thread = document.getElementById('thread');
+let thread = document.getElementById('thread');
 const main = document.getElementById('main');
 let conv = 0;
 let seq = 0;
@@ -212,7 +213,7 @@ function addPair(question, answerParagraphs) {
         claudeModel.push({ role: 'assistant', text: lorem(answerParagraphs), h: 200 + (id * 37) % 300 });
         return null;
     }
-    if (mode === 'chatgpt') {
+    if (mode === 'chatgpt' || mode === 'chatgpt-keepalive') {
         const turn = buildChatgptPair(question, lorem(answerParagraphs), id);
         thread.append(turn);
         return turn.querySelector('.ai-block');
@@ -226,6 +227,16 @@ function addPair(question, answerParagraphs) {
 function loadConversation(count) {
     conv++;
     seq = 0;
+    if (mode === 'chatgpt-keepalive' && thread.childElementCount) {
+        // ChatGPT 2026-11：访问过的对话整页留在 DOM 里，只把外层设成 display:none
+        const next = thread.cloneNode(false);
+        const page = document.createElement('div');
+        page.style.display = 'none';
+        thread.after(next);
+        thread.replaceWith(page);
+        page.append(thread);
+        thread = next;
+    }
     thread.replaceChildren();
     if (mode === 'claude') claudeReset();
     for (let i = 1; i <= count; i++) {
