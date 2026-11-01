@@ -1,0 +1,63 @@
+/* 圆点列：固定在右侧、垂直居中；提问太多时自身滚动 */
+.ait-tl-bar {
+    position: fixed;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    z-index: 2147483000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    max-height: 60vh;
+    padding: 8px 4px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    border-radius: 999px;
+    /* 半透明灰色：深浅两种背景下都能看清，不需要检测主题 */
+    background: rgba(128, 128, 128, 0.12);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+
+.ait-tl-bar[hidden] {
+    display: none;
+}
+
+.ait-tl-bar::-webkit-scrollbar {
+    display: none;
+}
+
+/* 按钮本身是 18px 的点击区域，可见的圆点画在 ::after 上 */
+.ait-tl-dot {
+    all: unset;
+    box-sizing: border-box;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.ait-tl-dot::after {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(128, 128, 128, 0.55);
+    transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.ait-tl-dot:hover::after,
+.ait-tl-dot:focus-visible::after {
+    background: rgba(128, 128, 128, 0.95);
+    transform: scale(1.4);
+}
+
+.ait-tl-dot:focus-visible {
+    outline: 2px solid rgba(128, 128, 128, 0.6);
+}

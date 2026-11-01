@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "AI Chat Timeline",
+  "version": "0.1.0",
+  "description": "在 ChatGPT、Claude、Gemini 对话页右侧显示提问圆点，点击跳转。",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": ["src/platforms.js", "src/timeline.js"],
+      "css": ["styles/timeline.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

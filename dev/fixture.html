@@ -1,0 +1,194 @@
+<!doctype html>
+<!--
+  本地模拟页：在不登录平台的情况下验证 src/timeline.js 和 src/platforms.js。
+  用法：在项目根目录启动静态服务器（python3 -m http.server 8765），打开 /dev/fixture.html?mode=<模式>
+  模式：gemini | claude
+        chatgpt（2026-11 结构，data-turn-key 一轮一对问答）
+        chatgpt-virtual（2026-07 虚拟化空壳结构） | chatgpt-legacy（旧结构）
+  模拟页会把对应平台的配置复制一份、域名改成 localhost，然后加载真实的插件脚本。
+  平台改版、src/platforms.js 新增结构后，在这里加一个对应的模式，旧模式保留用于回归。
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>AI Timeline fixture</title>
+<link rel="stylesheet" href="../styles/timeline.css">
+<style>
+    body { margin: 0; font: 14px/1.6 -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+    body.dark { background: #1e1e1e; color: #ddd; }
+    #toolbar { display: flex; gap: 8px; padding: 8px; flex-wrap: wrap; border-bottom: 1px solid #ccc; }
+    #main { flex: 1; overflow-y: auto; position: relative; }
+    #topbar { position: sticky; top: 0; height: 56px; background: rgba(200, 200, 255, 0.95); z-index: 5;
+              display: flex; align-items: center; padding: 0 16px; font-weight: bold; }
+    #thread { max-width: 720px; margin: 0 auto; padding: 16px 16px 200px; }
+    .user-bubble { background: rgba(120, 120, 255, 0.15); padding: 8px 12px; border-radius: 12px; margin: 16px 0 8px auto; max-width: 80%; }
+    .ai-block { padding: 8px 0; }
+    [data-is-intersecting="false"] { background: repeating-linear-gradient(45deg, transparent 0 10px, rgba(128,128,128,.08) 10px 20px); }
+</style>
+</head>
+<body>
+<div id="toolbar">
+    <b id="mode-label"></b>
+    <button id="add">发一条新提问</button>
+    <button id="stream">模拟流式输出 3 秒</button>
+    <button id="switch">切换对话</button>
+    <button id="clear">清空（首页）</button>
+    <button id="dark">切换深色</button>
+</div>
+<div id="main">
+    <div id="topbar">模拟顶栏（56px，sticky）</div>
+    <div id="thread"></div>
+</div>
+
+<script src="../src/platforms.js"></script>
+<script>
+'use strict';
+const mode = new URLSearchParams(location.search).get('mode') || 'gemini';
+document.getElementById('mode-label').textContent = `mode = ${mode}`;
+const thread = document.getElementById('thread');
+const main = document.getElementById('main');
+let conv = 0;
+let seq = 0;
+
+const lorem = n => Array.from({ length: n }, (_, i) => `第 ${i + 1} 段回复内容，用来撑开高度。`).join(' ');
+
+// ---------- 各平台的单轮 DOM ----------
+function buildTurn(role, text, id) {
+    if (mode === 'gemini') {
+        if (role === 'user') {
+            const wrap = document.createElement('div');
+            wrap.id = `conv${conv}-q${id}`;
+            wrap.innerHTML = `<user-query><div class="user-bubble"><p class="query-text-line">${text}<!----></p></div></user-query>`;
+            return wrap;
+        }
+        const r = document.createElement('model-response');
+        r.innerHTML = `<div class="ai-block">${text}</div>`;
+        return r;
+    }
+    if (mode === 'claude') {
+        const el = document.createElement('div');
+        el.setAttribute('data-test-render-count', '1');
+        el.innerHTML = role === 'user'
+            ? `<div data-testid="user-message" class="user-bubble"><p>${text}</p></div>`
+            : `<div class="ai-block"><p>${text}</p></div>`;
+        return el;
+    }
+    if (mode === 'chatgpt-legacy') {
+        const el = document.createElement('article');
+        el.setAttribute('data-turn', role);
+        el.setAttribute('data-turn-id', `t${conv}-${id}`);
+        el.innerHTML = role === 'user'
+            ? `<div class="user-bubble"><div class="whitespace-pre-wrap">${text}</div></div>`
+            : `<div class="ai-block">${text}</div>`;
+        return el;
+    }
+    // chatgpt-virtual：外层 DIV 套内层 SECTION（两层同 id），内部保留旧 [data-turn]
+    const outer = document.createElement('div');
+    const tid = `t${conv}-${id}`;
+    outer.setAttribute('data-turn-id-container', tid);
+    outer.setAttribute('data-is-intersecting', 'true');
+    outer._content = { role, text, tid };
+    renderChatgpt(outer);
+    return outer;
+}
+
+// ---------- ChatGPT 虚拟化：视口外轮次卸载成保留高度的空壳 ----------
+function renderChatgpt(outer) {
+    const { role, text, tid } = outer._content;
+    outer.style.height = '';
+    outer.setAttribute('data-is-intersecting', 'true');
+    outer.innerHTML = `<section data-turn-id-container="${tid}" data-is-intersecting="true">
+        <div data-turn="${role}" data-turn-id="${tid}">${role === 'user'
+            ? `<div class="user-bubble"><div class="whitespace-pre-wrap">${text}</div></div>`
+            : `<div class="ai-block">${text}</div>`}</div></section>`;
+}
+function shellChatgpt(outer) {
+    if (!outer.firstChild) return;
+    outer.style.height = `${outer.offsetHeight}px`;
+    outer.setAttribute('data-is-intersecting', 'false');
+    outer.replaceChildren();
+}
+// 同步计算（不用 IntersectionObserver），页面不渲染帧时也能手动调用 virtualize() 测试
+function virtualize() {
+    if (mode !== 'chatgpt-virtual') return;
+    const view = main.getBoundingClientRect();
+    const all = [...thread.querySelectorAll(':scope > [data-turn-id-container]')];
+    all.forEach((outer, i) => {
+        const r = outer.getBoundingClientRect();
+        const near = r.bottom > view.top - 300 && r.top < view.bottom + 300;
+        if (near || i === all.length - 1) { if (!outer.firstChild) renderChatgpt(outer); }  // 最后一轮始终渲染
+        else shellChatgpt(outer);
+    });
+}
+window.virtualize = virtualize;
+main.addEventListener('scroll', virtualize, { passive: true });
+
+// chatgpt（2026-11）：一轮问答包在 div[data-turn-key] 里，开头可能有时间行，
+// 提问由隐藏标题 h4[data-conversation-role] 标记，提问气泡是它后面的兄弟 div
+function buildChatgptPair(question, answer, id) {
+    const turn = document.createElement('div');
+    turn.setAttribute('data-turn-key', `k${conv}-${id}`);
+    turn.innerHTML = `<div data-content-search-turn-key>
+        ${id === 1 ? '<div class="time-row" style="height:52px"><time>Today</time></div>' : ''}
+        <div><div data-talvt-turn-state><div>
+            <div><h4 data-conversation-role="user" style="position:absolute;width:1px;height:1px;overflow:hidden"><span>You said:</span></h4>
+                 <div class="user-bubble"><div>${question}</div></div></div>
+            <div><h4 data-conversation-role="assistant" style="position:absolute;width:1px;height:1px;overflow:hidden"><span>ChatGPT said:</span></h4>
+                 <div class="ai-block">${answer}</div></div>
+        </div></div></div></div>`;
+    return turn;
+}
+
+function addPair(question, answerParagraphs) {
+    const id = ++seq;
+    if (mode === 'chatgpt') {
+        const turn = buildChatgptPair(question, lorem(answerParagraphs), id);
+        thread.append(turn);
+        return turn.querySelector('.ai-block');
+    }
+    const u = buildTurn('user', question, `${id}u`);
+    const a = buildTurn('assistant', lorem(answerParagraphs), `${id}a`);
+    thread.append(u, a);
+    return a;
+}
+
+function loadConversation(count) {
+    conv++;
+    seq = 0;
+    thread.replaceChildren();
+    for (let i = 1; i <= count; i++) {
+        addPair(`对话 ${conv} 的第 ${i} 个问题：${'这是一段比较长的提问文字，'.repeat(i % 4 + 1)}结束。`, 8 + (i * 7) % 30);
+    }
+}
+
+document.getElementById('add').onclick = () => {
+    addPair(`新提问 ${seq + 1}（${new Date().toLocaleTimeString()}）`, 10);
+    main.scrollTop = main.scrollHeight;
+    virtualize();
+};
+document.getElementById('stream').onclick = () => {
+    const blocks = thread.querySelectorAll('.ai-block');
+    const target = blocks[blocks.length - 1];
+    const timer = setInterval(() => { target.append(document.createTextNode(' 流式输出的字。')); }, 30);
+    setTimeout(() => clearInterval(timer), 3000);
+};
+document.getElementById('switch').onclick = () => { loadConversation(8); main.scrollTop = 0; virtualize(); };
+document.getElementById('clear').onclick = () => thread.replaceChildren();
+document.getElementById('dark').onclick = () => document.body.classList.toggle('dark');
+
+loadConversation(25);
+main.scrollTop = main.scrollHeight;  // 像打开已有对话一样停在底部
+virtualize();
+
+// ---------- 加载真实插件脚本 ----------
+const platformId = mode.startsWith('chatgpt') ? 'chatgpt' : mode;
+const original = TL_PLATFORMS.find(p => p.id === platformId);
+TL_PLATFORMS.push({ ...original, id: `fixture-${mode}`, hosts: ['localhost', '127.0.0.1'] });
+setTimeout(() => {
+    const s = document.createElement('script');
+    s.src = '../src/timeline.js';
+    document.body.appendChild(s);
+}, 200);
+</script>
+</body>
+</html>
