@@ -2,7 +2,9 @@
 <!--
   本地模拟页：在不登录平台的情况下验证 src/timeline.js 和 src/platforms.js。
   用法：在项目根目录启动静态服务器（python3 -m http.server 8765），打开 /dev/fixture.html?mode=<模式>
-  模式：gemini | claude
+  模式：gemini
+        claude（2026-11 虚拟列表：只渲染视口附近的行，其余行移出 DOM、用上下空块占高度）
+        claude-legacy（旧结构 data-test-render-count）
         chatgpt（2026-11 结构，data-turn-key 一轮一对问答）
         chatgpt-virtual（2026-07 虚拟化空壳结构） | chatgpt-legacy（旧结构）
   模拟页会把对应平台的配置复制一份、域名改成 localhost，然后加载真实的插件脚本。
@@ -69,7 +71,7 @@ function buildTurn(role, text, id) {
         r.innerHTML = `<div class="ai-block">${text}</div>`;
         return r;
     }
-    if (mode === 'claude') {
+    if (mode === 'claude-legacy') {
         const el = document.createElement('div');
         el.setAttribute('data-test-render-count', '1');
         el.innerHTML = role === 'user'
@@ -112,8 +114,66 @@ function shellChatgpt(outer) {
     outer.setAttribute('data-is-intersecting', 'false');
     outer.replaceChildren();
 }
+// ---------- Claude 2026-11 虚拟列表 ----------
+// 每行 div[data-index][data-perf-row][data-perf-row-from-tail]；只渲染视口上下 300px 内的行，
+// 其余行移出 DOM，由上下两个 aria-hidden 空块占住高度。行高固定，方便计算
+const claudeModel = [];            // { role, text, h }
+const claudeEls = new Map();       // 行序号 → 行元素（复用，保持元素身份）
+let claudeList = null, claudeTop = null, claudeBottom = null;
+
+function claudeReset() {
+    claudeModel.length = 0;
+    claudeEls.clear();
+    claudeList = document.createElement('div');
+    claudeTop = document.createElement('div');
+    claudeBottom = document.createElement('div');
+    claudeTop.setAttribute('aria-hidden', 'true');
+    claudeBottom.setAttribute('aria-hidden', 'true');
+    claudeList.append(claudeTop, claudeBottom);
+    thread.replaceChildren(claudeList);
+}
+function claudeRow(i) {
+    let el = claudeEls.get(i);
+    if (!el) {
+        const m = claudeModel[i];
+        el = document.createElement('div');
+        el.setAttribute('data-index', i);
+        el.setAttribute('data-rs-index', i);
+        el.setAttribute('data-perf-row', m.role);
+        el.style.height = `${m.h}px`;
+        el.style.overflow = 'hidden';
+        el.innerHTML = m.role === 'human'
+            ? `<div data-transcript-row><div class="user-bubble" data-testid="user-message"><p>${m.text}</p></div></div>`
+            : `<div data-transcript-row><div class="ai-block">${m.text}</div></div>`;
+        claudeEls.set(i, el);
+    }
+    el.setAttribute('data-perf-row-from-tail', claudeModel.length - 1 - i);
+    return el;
+}
+function virtualizeClaude() {
+    if (!claudeList || claudeModel.length === 0) return;
+    const offsets = [0];
+    claudeModel.forEach(m => offsets.push(offsets[offsets.length - 1] + m.h));
+    const listTop = claudeList.offsetTop;
+    const viewTop = main.scrollTop - 300 - listTop;
+    const viewBottom = main.scrollTop + main.clientHeight + 300 - listTop;
+    let a = claudeModel.findIndex((_, i) => offsets[i + 1] > viewTop);
+    if (a < 0) a = claudeModel.length - 1;
+    let b = a;
+    while (b + 1 < claudeModel.length && offsets[b + 1] < viewBottom) b++;
+    const rows = [];
+    for (let i = a; i <= b; i++) rows.push(claudeRow(i));
+    claudeTop.style.height = `${offsets[a]}px`;
+    claudeBottom.style.height = `${offsets[claudeModel.length] - offsets[b + 1]}px`;
+    const current = [...claudeList.children].slice(1, -1);
+    if (current.length !== rows.length || current.some((el, i) => el !== rows[i])) {
+        claudeList.replaceChildren(claudeTop, ...rows, claudeBottom);
+    }
+}
+
 // 同步计算（不用 IntersectionObserver），页面不渲染帧时也能手动调用 virtualize() 测试
 function virtualize() {
+    if (mode === 'claude') return virtualizeClaude();
     if (mode !== 'chatgpt-virtual') return;
     const view = main.getBoundingClientRect();
     const all = [...thread.querySelectorAll(':scope > [data-turn-id-container]')];
@@ -126,6 +186,8 @@ function virtualize() {
 }
 window.virtualize = virtualize;
 main.addEventListener('scroll', virtualize, { passive: true });
+// 面板隐藏时浏览器不派发 scroll 事件，定时兜底（插件 reveal 的估算滚动也靠它触发渲染）
+if (mode === 'claude') setInterval(virtualize, 100);
 
 // chatgpt（2026-11）：一轮问答包在 div[data-turn-key] 里，开头可能有时间行，
 // 提问由隐藏标题 h4[data-conversation-role] 标记，提问气泡是它后面的兄弟 div
@@ -145,6 +207,11 @@ function buildChatgptPair(question, answer, id) {
 
 function addPair(question, answerParagraphs) {
     const id = ++seq;
+    if (mode === 'claude') {
+        claudeModel.push({ role: 'human', text: question, h: 100 });
+        claudeModel.push({ role: 'assistant', text: lorem(answerParagraphs), h: 200 + (id * 37) % 300 });
+        return null;
+    }
     if (mode === 'chatgpt') {
         const turn = buildChatgptPair(question, lorem(answerParagraphs), id);
         thread.append(turn);
@@ -160,6 +227,7 @@ function loadConversation(count) {
     conv++;
     seq = 0;
     thread.replaceChildren();
+    if (mode === 'claude') claudeReset();
     for (let i = 1; i <= count; i++) {
         addPair(`对话 ${conv} 的第 ${i} 个问题：${'这是一段比较长的提问文字，'.repeat(i % 4 + 1)}结束。`, 8 + (i * 7) % 30);
     }
@@ -177,7 +245,7 @@ document.getElementById('stream').onclick = () => {
     setTimeout(() => clearInterval(timer), 3000);
 };
 document.getElementById('switch').onclick = () => { loadConversation(8); main.scrollTop = 0; virtualize(); };
-document.getElementById('clear').onclick = () => thread.replaceChildren();
+document.getElementById('clear').onclick = () => { thread.replaceChildren(); claudeList = null; };
 document.getElementById('dark').onclick = () => document.body.classList.toggle('dark');
 
 loadConversation(25);
@@ -185,7 +253,7 @@ main.scrollTop = main.scrollHeight;  // 像打开已有对话一样停在底部
 virtualize();
 
 // ---------- 加载真实插件脚本 ----------
-const platformId = mode.startsWith('chatgpt') ? 'chatgpt' : mode;
+const platformId = mode.split('-')[0];
 const original = TL_PLATFORMS.find(p => p.id === platformId);
 TL_PLATFORMS.push({ ...original, id: `fixture-${mode}`, hosts: ['localhost', '127.0.0.1'] });
 setTimeout(() => {

@@ -80,10 +80,21 @@
     // 圆点列自身滚动时圆点会移动，提示位置就不对了
     bar.addEventListener('scroll', hideTip, { passive: true });
 
+    // 每条提问是一个 { key, el, text? }：
+    // - key   稳定标识，用来判断提问列表有没有变
+    // - el    提问元素；平台把视口外的提问整个移出 DOM 时为 null（由 platform.reveal 负责找回）
+    // - text  可选，平台已经取好的文字
     let turns = [];
     let matchedSelector = null;
 
     function findTurns() {
+        // 平台自己列出全部提问（用于把视口外提问移出 DOM 的平台）
+        if (platform.listTurns) {
+            let items = null;
+            try { items = platform.listTurns(); } catch {}
+            if (items) return { selector: 'listTurns()', turns: items };
+        }
+
         try { platform.prepare?.(); } catch {}
 
         for (const selector of platform.turnSelectors) {
@@ -95,11 +106,16 @@
             const result = [];
             for (const el of found) {
                 const last = result[result.length - 1];
-                if (!last || !last.contains(el)) result.push(el);
+                if (!last || !last.el.contains(el)) result.push({ key: el, el });
             }
             return { selector, turns: result };
         }
         return { selector: null, turns: [] };
+    }
+
+    function turnText(item) {
+        if (item.text) return item.text;
+        return item.el ? getText(item.el) : '';
     }
 
     function getText(el) {
@@ -114,11 +130,12 @@
                     : el.textContent;
             }
         } catch {}
-        text = tlCleanText(text);
-        return text.length > TITLE_MAX_LENGTH ? `${text.slice(0, TITLE_MAX_LENGTH)}…` : text;
+        return tlCleanText(text);
     }
 
     function setDotText(dot, index, text) {
+        text = tlCleanText(text);
+        if (text.length > TITLE_MAX_LENGTH) text = `${text.slice(0, TITLE_MAX_LENGTH)}…`;
         dot.setAttribute('aria-label', text ? `${index + 1}. ${text}` : `#${index + 1}`);
         dot.dataset.hasText = text ? '1' : '';
         if (dot === tipDot) showTip(dot);
@@ -129,12 +146,14 @@
         matchedSelector = found.selector;
         const next = found.turns;
 
-        // 数量相同且每个元素都是同一个 DOM 节点 → 结构没变。
-        // AI 流式输出期间基本都走这里，只补齐之前没取到的文字（如 ChatGPT 空壳后来渲染出来了）
-        if (next.length === turns.length && next.every((el, i) => el === turns[i])) {
+        // 数量相同且 key 逐个相同 → 提问列表没变，不重建圆点。
+        // AI 流式输出期间基本都走这里：只更新元素引用（虚拟列表滚动时元素会进出 DOM），
+        // 并补齐之前没取到的文字（如 ChatGPT 空壳、Claude 视口外的提问后来渲染出来了）
+        if (next.length === turns.length && next.every((item, i) => item.key === turns[i].key)) {
+            turns = next;
             bar.querySelectorAll('.ait-tl-dot:not([data-has-text="1"])').forEach(dot => {
                 const index = Number(dot.dataset.index);
-                const text = getText(turns[index]);
+                const text = turnText(turns[index]);
                 if (text) setDotText(dot, index, text);
             });
             return;
@@ -142,12 +161,12 @@
 
         turns = next;
         hideTip();
-        bar.replaceChildren(...turns.map((el, index) => {
+        bar.replaceChildren(...turns.map((item, index) => {
             const dot = document.createElement('button');
             dot.type = 'button';
             dot.className = 'ait-tl-dot';
             dot.dataset.index = String(index);
-            setDotText(dot, index, getText(el));
+            setDotText(dot, index, turnText(item));
             return dot;
         }));
         bar.hidden = turns.length === 0;
@@ -184,14 +203,26 @@
         cancelScrollFix = cleanup;
     }
 
+    // 连续点击时只执行最后一次的 reveal 结果
+    let revealSeq = 0;
+
     bar.addEventListener('click', event => {
         const dot = event.target.closest('.ait-tl-dot');
         if (!dot) return;
         const index = Number(dot.dataset.index);
-        // 切换对话的瞬间，旧元素可能已被移除：先刷新一次再按序号找
-        if (!turns[index]?.isConnected) render();
-        const el = turns[index];
-        if (el?.isConnected) jumpTo(el);
+        const seq = ++revealSeq;
+        // 切换对话的瞬间、或虚拟列表刚换过渲染窗口，旧元素可能已被移除：先刷新一次再按序号找
+        if (!turns[index]?.el?.isConnected) render();
+        const item = turns[index];
+        if (!item) return;
+        if (item.el?.isConnected) {
+            jumpTo(item.el);
+        } else if (platform.reveal) {
+            // 提问不在 DOM 里：交给平台先滚动到附近、等它渲染出来
+            Promise.resolve(platform.reveal(item))
+                .then(el => { if (seq === revealSeq && el?.isConnected) jumpTo(el); })
+                .catch(() => {});
+        }
     });
 
     // ---------- 自动更新：节流而不是防抖 ----------
@@ -221,8 +252,9 @@
             matchedSelector,
             selectorCounts,
             turns: turns.length,
+            notInDom: turns.filter(item => !item.el?.isConnected).length,
             withoutText: bar.querySelectorAll('.ait-tl-dot:not([data-has-text="1"])').length,
-            sample: turns.slice(0, 3).map(getText),
+            sample: turns.slice(0, 3).map(turnText),
         };
     };
 })();

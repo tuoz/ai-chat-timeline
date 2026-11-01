@@ -13,6 +13,11 @@
  * - scrollMarginTop  跳转后提问距离滚动区域顶部的像素，用来避开平台顶栏
  * - prepare()        可选。每次查找提问前调用，用于预处理 DOM（目前只有 ChatGPT 需要）
  * - getText(el)      可选。自定义取文字，优先级高于 textSelector
+ * - listTurns()      可选。平台把视口外的提问整个移出 DOM 时，由平台自己列出全部提问：
+ *                    返回 [{ key, el, text }]，el 为 null 表示该提问当前不在 DOM 里；
+ *                    返回 null 时退回 turnSelectors。key 必须稳定，列表不变时 key 不变
+ * - reveal(item)     可选，配合 listTurns()。点到不在 DOM 里的提问时调用：
+ *                    把页面滚动到它附近，等平台渲染出来后返回元素（Promise）；找不到返回 null
  */
 
 'use strict';
@@ -97,6 +102,133 @@ function chatgptGetText(el) {
     return chatgptTextCache.get(id) || '';
 }
 
+// ==================== Claude ====================
+//
+// 2026-11 结构（2026-11-01 在真实页面确认）：
+// 对话是虚拟列表，每一行（一条提问或一条回答）是 div[data-index][data-perf-row]：
+// - data-index                 行在整个对话里的序号（0 起）
+// - data-perf-row              human / assistant
+// - data-perf-row-from-tail    距最后一行的距离，所以 总行数 = data-index + 它 + 1
+// 视口附近的行才渲染；其余的行整个移出 DOM，上下各用一个 aria-hidden 空块占住高度，
+// 不留单独的空壳。所以由 claudeListTurns() 按序号列出全部提问：
+// 未渲染行的角色按"提问和回答严格交替"从最近的已渲染行推出。
+//
+// 更早的结构：[data-test-render-count]:has([data-testid="user-message"])（2026-11 已不存在，保留作后备）
+
+const CLAUDE_ROW = '[data-index][data-perf-row]';
+const CLAUDE_TEXT = '[data-testid="user-message"]';
+const CLAUDE_TEXT_CACHE_MAX = 500;
+const CLAUDE_REVEAL_ATTEMPTS = 8;
+const CLAUDE_REVEAL_WAIT_MS = 150;
+
+// "对话路径#行序号" → 提问文字。行渲染出来时存下，移出 DOM 后用于悬停预览。
+const claudeTextCache = new Map();
+
+function claudeRowIndex(row) {
+    return Number(row.getAttribute('data-index'));
+}
+
+function claudeRenderedRows() {
+    return [...document.querySelectorAll(CLAUDE_ROW)]
+        .filter(row => Number.isInteger(claudeRowIndex(row)))
+        .sort((a, b) => claudeRowIndex(a) - claudeRowIndex(b));
+}
+
+function claudeTotalRows(rows) {
+    const last = rows[rows.length - 1];
+    const fromTail = Number(last.getAttribute('data-perf-row-from-tail'));
+    return Number.isInteger(fromTail) ? claudeRowIndex(last) + fromTail + 1 : claudeRowIndex(last) + 1;
+}
+
+function claudeListTurns() {
+    const rows = claudeRenderedRows();
+    if (rows.length === 0) return null;
+
+    const byIndex = new Map(rows.map(row => [claudeRowIndex(row), row]));
+    const firstIndex = claudeRowIndex(rows[0]);
+    const lastIndex = claudeRowIndex(rows[rows.length - 1]);
+    const total = claudeTotalRows(rows);
+
+    const roleOf = index => {
+        const row = byIndex.get(index);
+        if (row) return row.getAttribute('data-perf-row');
+        const anchor = index < firstIndex ? firstIndex : lastIndex;
+        const anchorRole = byIndex.get(anchor).getAttribute('data-perf-row');
+        if ((anchor - index) % 2 === 0) return anchorRole;
+        return anchorRole === 'human' ? 'assistant' : 'human';
+    };
+
+    const path = location.pathname;
+    const items = [];
+    for (let index = 0; index < total; index++) {
+        if (roleOf(index) !== 'human') continue;
+        const key = `${path}#${index}`;
+        const el = byIndex.get(index) || null;
+        let text = '';
+        if (el) {
+            text = tlCleanText(el.querySelector(CLAUDE_TEXT)?.textContent);
+            if (text) {
+                if (!claudeTextCache.has(key) && claudeTextCache.size >= CLAUDE_TEXT_CACHE_MAX) {
+                    claudeTextCache.delete(claudeTextCache.keys().next().value);
+                }
+                claudeTextCache.set(key, text);
+            }
+        } else {
+            text = claudeTextCache.get(key) || '';
+        }
+        items.push({ key, el, text, index });
+    }
+    return items;
+}
+
+function claudeScroller(el) {
+    for (let node = el?.parentElement; node && node !== document.body; node = node.parentElement) {
+        const overflowY = getComputedStyle(node).overflowY;
+        if ((overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight) return node;
+    }
+    return null;
+}
+
+// 目标行不在 DOM 里：按它在上方/下方空块里的大致比例估算位置，瞬时滚过去，等渲染；
+// 估算不准就以新的渲染窗口再估一次，通常 1~2 次就能渲染出来
+async function claudeReveal(item) {
+    const findRow = () => document.querySelector(`[data-index="${item.index}"][data-perf-row]`);
+    for (let attempt = 0; attempt < CLAUDE_REVEAL_ATTEMPTS; attempt++) {
+        const found = findRow();
+        if (found) return found;
+
+        const rows = claudeRenderedRows();
+        if (rows.length === 0) return null;
+        const list = rows[0].parentElement;
+        const scroller = claudeScroller(list);
+        if (!scroller) return null;
+
+        const firstRow = rows[0];
+        const lastRow = rows[rows.length - 1];
+        const firstIndex = claudeRowIndex(firstRow);
+        const lastIndex = claudeRowIndex(lastRow);
+        const listRect = list.getBoundingClientRect();
+        let targetY;
+        if (item.index < firstIndex) {
+            const top = listRect.top;
+            targetY = top + (firstRow.getBoundingClientRect().top - top) * (item.index / firstIndex);
+        } else {
+            const bottom = lastRow.getBoundingClientRect().bottom;
+            const after = claudeTotalRows(rows) - lastIndex - 1;
+            targetY = bottom + (listRect.bottom - bottom) * ((item.index - lastIndex - 1) / Math.max(1, after));
+        }
+        const scrollerTop = scroller.getBoundingClientRect().top;
+        // 不能一步落到最底部：2026-11-01 实测从顶部瞬时滚到底部后，Claude 会把后续的
+        // 程序滚动全部拉回底部（之后的跳转完全无效）；离底半屏以上则正常。
+        // 目标在底部附近时，停在离底半屏处它也在可见范围内，照样会被渲染
+        const maxTop = scroller.scrollHeight - scroller.clientHeight - scroller.clientHeight / 2;
+        const nextTop = scroller.scrollTop + targetY - scrollerTop - scroller.clientHeight / 3;
+        scroller.scrollTop = Math.max(0, Math.min(nextTop, maxTop));
+        await new Promise(resolve => setTimeout(resolve, CLAUDE_REVEAL_WAIT_MS));
+    }
+    return findRow();
+}
+
 // ==================== 平台列表 ====================
 
 const TL_PLATFORMS = [
@@ -120,11 +252,18 @@ const TL_PLATFORMS = [
     {
         id: 'claude',
         hosts: ['claude.ai'],
-        // 尚未在真实页面验证
-        turnSelectors: ['[data-test-render-count]:has([data-testid="user-message"])'],
-        textSelector: 'p',
-        // 估计值，待在真实页面按顶栏高度调整
-        scrollMarginTop: 72,
+        // 2026-11 虚拟列表结构，见上方说明；找不到虚拟列表行时退回 turnSelectors
+        listTurns: claudeListTurns,
+        reveal: claudeReveal,
+        // 第 1 个用于给 listTurns 的行加跳转留白，第 2 个是更早的结构
+        turnSelectors: [
+            '[data-index][data-perf-row="human"]',
+            '[data-test-render-count]:has([data-testid="user-message"])',
+        ],
+        // 2026-11-01 确认：整行还含时间等文字，只取提问本身（多段落时包含全部段落）
+        textSelector: CLAUDE_TEXT,
+        // 2026-11-01 实测：滚动容器自带 scroll-padding-top: 45px（正好避开顶栏），会叠加
+        scrollMarginTop: 12,
     },
     {
         id: 'gemini',

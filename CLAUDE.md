@@ -4,7 +4,7 @@ Chrome MV3 扩展：在 ChatGPT、Claude、Gemini 对话页右侧显示一列圆
 
 ## 结构
 
-- `src/platforms.js`：**易变**。三个平台的域名、选择器、跳转留白，以及 ChatGPT 2026-07 结构的角色推断。平台改版只改这里。每个选择器旁注明在真实页面确认的日期。
+- `src/platforms.js`：**易变**。三个平台的域名、选择器、跳转留白，以及虚拟化列表的处理（ChatGPT 2026-07 结构的角色推断、Claude 2026-11 虚拟列表的 `listTurns`/`reveal`）。平台改版只改这里。每个选择器旁注明在真实页面确认的日期。
 - `src/timeline.js`：**稳定**。与平台无关的核心：查找提问 → 比较 → 渲染圆点 → 点击跳转，一个 MutationObserver 驱动更新。不要在这里写任何平台判断。
 - `styles/timeline.css`：圆点样式。
 - `manifest.json`：`content_scripts.matches` 必须和 `platforms.js` 的 `hosts` 一致。
@@ -27,6 +27,8 @@ Chrome MV3 扩展：在 ChatGPT、Claude、Gemini 对话页右侧显示一列圆
 6. **修改 `src/platforms.js`**：
    - 新选择器加到 `turnSelectors` **最前面**，旧的保留作后备（平台常灰度发布，新旧结构并存）；注释写上结构特征和确认日期。
    - 文字位置变了就改 `textSelector`（ChatGPT 改 `CHATGPT_TEXT`）。
+   - 先确认平台有没有虚拟化：滚动容器的 `scrollHeight` 明显大于已渲染行的总高度，就说明视口外的行不在 DOM 里。视口外留空壳的（ChatGPT 2026-07）用 `prepare` 给空壳打标；整行移出 DOM、只留上下空块的（Claude 2026-11）用 `listTurns` + `reveal` 钩子。
+   - `reveal` 估算滚动时不要一步落到最底部：Claude 会因此把之后的程序滚动全部拉回底部。
    - `scrollMarginTop` 按实测调整，要留出平台跳转后自行微调的余量（ChatGPT 2026-11 会再挪约 ±13px）。先查滚动容器的 `scroll-padding-top`：它会和 `scroll-margin-top` 叠加（Gemini 2026-11 自带 56px）。
 7. **在 `dev/fixture.html` 加一个新结构的模式**，然后用应用内浏览器跑全部模式回归：每个模式的命中选择器、圆点数、发新提问后数量 +1。
 8. 告诉用户在扩展页点刷新，再刷新对话页验证。
