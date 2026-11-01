@@ -129,11 +129,13 @@ const TL_PLATFORMS = [
     {
         id: 'gemini',
         hosts: ['gemini.google.com'],
-        // 尚未在真实页面验证
+        // 2026-11-01 确认；user-query 的文字比提问本身多（实测 30 字 vs 10 字），
+        // 所以只取 .query-text-line（提问正文，多行时拼接）
         turnSelectors: ['user-query'],
         textSelector: '.query-text-line',
-        // 估计值，待在真实页面按顶栏高度调整
-        scrollMarginTop: 72,
+        // 2026-11-01 实测：滚动容器 infinite-scroller 自带 scroll-padding-top: 56px（正好避开顶栏），
+        // 会和这里叠加，所以只需留一点空隙：提问气泡稳定落在顶栏下方 11px
+        scrollMarginTop: 12,
     },
 ];
 

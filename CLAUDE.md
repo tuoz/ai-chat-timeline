@@ -27,7 +27,7 @@ Chrome MV3 扩展：在 ChatGPT、Claude、Gemini 对话页右侧显示一列圆
 6. **修改 `src/platforms.js`**：
    - 新选择器加到 `turnSelectors` **最前面**，旧的保留作后备（平台常灰度发布，新旧结构并存）；注释写上结构特征和确认日期。
    - 文字位置变了就改 `textSelector`（ChatGPT 改 `CHATGPT_TEXT`）。
-   - `scrollMarginTop` 按实测调整，要留出平台跳转后自行微调的余量（ChatGPT 2026-11 会再挪约 ±13px）。
+   - `scrollMarginTop` 按实测调整，要留出平台跳转后自行微调的余量（ChatGPT 2026-11 会再挪约 ±13px）。先查滚动容器的 `scroll-padding-top`：它会和 `scroll-margin-top` 叠加（Gemini 2026-11 自带 56px）。
 7. **在 `dev/fixture.html` 加一个新结构的模式**，然后用应用内浏览器跑全部模式回归：每个模式的命中选择器、圆点数、发新提问后数量 +1。
 8. 告诉用户在扩展页点刷新，再刷新对话页验证。
 
