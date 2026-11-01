@@ -61,3 +61,29 @@
 .ait-tl-dot:focus-visible {
     outline: 2px solid rgba(128, 128, 128, 0.6);
 }
+
+/* 悬停提示：深色底在深浅两种页面上都清楚；最多显示 4 行 */
+.ait-tl-tip {
+    position: fixed;
+    z-index: 2147483001;
+    box-sizing: border-box;
+    max-width: 320px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgba(32, 33, 35, 0.95);
+    color: #fff;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+    pointer-events: none;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    overflow: hidden;
+}
+
+.ait-tl-tip[hidden] {
+    display: none;
+}

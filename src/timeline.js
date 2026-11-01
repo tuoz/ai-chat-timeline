@@ -37,6 +37,49 @@
     bar.hidden = true;
     document.documentElement.appendChild(bar);
 
+    // ---------- 悬停提示 ----------
+    // 自己画而不用 title：浏览器原生提示要停留约 1 秒才出现
+    const tip = document.createElement('div');
+    tip.className = 'ait-tl-tip';
+    tip.setAttribute('role', 'tooltip');
+    tip.hidden = true;
+    document.documentElement.appendChild(tip);
+    let tipDot = null;
+
+    function showTip(dot) {
+        tipDot = dot;
+        tip.textContent = dot.getAttribute('aria-label');
+        tip.hidden = false;
+        // 显示在圆点左侧、垂直居中，上下不超出视口
+        const r = dot.getBoundingClientRect();
+        const margin = 8;
+        tip.style.right = `${window.innerWidth - r.left + 6}px`;
+        const half = tip.offsetHeight / 2;
+        const center = Math.min(
+            Math.max(r.top + r.height / 2, margin + half),
+            window.innerHeight - margin - half
+        );
+        tip.style.top = `${center - half}px`;
+    }
+
+    function hideTip() {
+        tipDot = null;
+        tip.hidden = true;
+    }
+
+    bar.addEventListener('mouseover', event => {
+        const dot = event.target.closest('.ait-tl-dot');
+        if (dot && dot !== tipDot) showTip(dot);
+    });
+    bar.addEventListener('mouseleave', hideTip);
+    bar.addEventListener('focusin', event => {
+        const dot = event.target.closest('.ait-tl-dot');
+        if (dot) showTip(dot);
+    });
+    bar.addEventListener('focusout', hideTip);
+    // 圆点列自身滚动时圆点会移动，提示位置就不对了
+    bar.addEventListener('scroll', hideTip, { passive: true });
+
     let turns = [];
     let matchedSelector = null;
 
@@ -76,9 +119,9 @@
     }
 
     function setDotText(dot, index, text) {
-        dot.title = text ? `${index + 1}. ${text}` : `#${index + 1}`;
-        dot.setAttribute('aria-label', dot.title);
+        dot.setAttribute('aria-label', text ? `${index + 1}. ${text}` : `#${index + 1}`);
         dot.dataset.hasText = text ? '1' : '';
+        if (dot === tipDot) showTip(dot);
     }
 
     function render() {
@@ -98,6 +141,7 @@
         }
 
         turns = next;
+        hideTip();
         bar.replaceChildren(...turns.map((el, index) => {
             const dot = document.createElement('button');
             dot.type = 'button';

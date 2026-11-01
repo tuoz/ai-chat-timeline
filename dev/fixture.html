@@ -12,7 +12,11 @@
 <head>
 <meta charset="utf-8">
 <title>AI Timeline fixture</title>
-<link rel="stylesheet" href="../styles/timeline.css">
+<script>
+    // 资源加时间戳，避免浏览器缓存旧版本的插件文件
+    const BUST = `?t=${Date.now()}`;
+    document.write(`<link rel="stylesheet" href="../styles/timeline.css${BUST}">`);
+</script>
 <style>
     body { margin: 0; font: 14px/1.6 -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; }
     body.dark { background: #1e1e1e; color: #ddd; }
@@ -40,7 +44,7 @@
     <div id="thread"></div>
 </div>
 
-<script src="../src/platforms.js"></script>
+<script>document.write(`<script src="../src/platforms.js${BUST}"><\/script>`);</script>
 <script>
 'use strict';
 const mode = new URLSearchParams(location.search).get('mode') || 'gemini';
@@ -186,7 +190,7 @@ const original = TL_PLATFORMS.find(p => p.id === platformId);
 TL_PLATFORMS.push({ ...original, id: `fixture-${mode}`, hosts: ['localhost', '127.0.0.1'] });
 setTimeout(() => {
     const s = document.createElement('script');
-    s.src = '../src/timeline.js';
+    s.src = `../src/timeline.js${BUST}`;
     document.body.appendChild(s);
 }, 200);
 </script>
