@@ -177,7 +177,8 @@
             setDotText(dot, index, turnText(item));
             return dot;
         }));
-        bar.hidden = turns.length === 0;
+        // 只有一条提问时没有可跳转的地方，不显示
+        bar.hidden = turns.length < 2;
     }
 
     // ---------- 跳转 ----------
